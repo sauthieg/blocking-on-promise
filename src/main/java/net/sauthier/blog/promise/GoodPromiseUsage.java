@@ -17,6 +17,7 @@
 package net.sauthier.blog.promise;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 
 import org.forgerock.http.apache.async.AsyncHttpClientProvider;
 import org.forgerock.http.handler.HttpClientHandler;
@@ -35,25 +36,30 @@ public class GoodPromiseUsage {
         // Create an HTTP Client with a single thread
         Options options = Options.defaultOptions()
                                  .set(AsyncHttpClientProvider.OPTION_WORKER_THREADS, 1);
-        HttpClientHandler client = new HttpClientHandler(options);
+        try (HttpClientHandler client = new HttpClientHandler(options)) {
+            // Get the response on the "main" thread
+            Response response = asyncPromise(client).getOrThrow();
+            long length = response.getHeaders().get(ContentLengthHeader.class).getLength();
+            System.out.printf("response size: %d bytes%n", length);
+        }
+    }
+
+    private static Promise<Response, NeverThrowsException> asyncPromise(final HttpClientHandler client)
+            throws URISyntaxException {
 
         // Perform a first request
         Request first = new Request().setMethod("GET").setUri("http://forgerock.org");
-        Promise<Response, NeverThrowsException> main;
-        main = client.handle(new RootContext(), first)
-                     .thenAsync(new AsyncFunction<Response, Response, NeverThrowsException>() {
-                         @Override
-                         public Promise<Response, NeverThrowsException> apply(final Response value) {
-                             // Perform a second request on the thread used to receive the response
-                             Request second = new Request().setMethod("GET")
-                                                           .setUri(URI.create("http://www.apache.org"));
-                             return client.handle(new RootContext(), second);
-                         }
-                     });
-
-        // Get the response on the "main" thread
-        Response response = main.getOrThrow();
-        long length = response.getHeaders().get(ContentLengthHeader.class).getLength();
-        System.out.printf("response size: %d bytes%n", length);
+        Promise<Response, NeverThrowsException> promise;
+        promise = client.handle(new RootContext(), first)
+                        .thenAsync(new AsyncFunction<Response, Response, NeverThrowsException>() {
+                            @Override
+                            public Promise<Response, NeverThrowsException> apply(final Response value) {
+                                // Perform a second request on the thread used to receive the response
+                                Request second = new Request().setMethod("GET")
+                                                              .setUri(URI.create("http://www.apache.org"));
+                                return client.handle(new RootContext(), second);
+                            }
+                        });
+        return promise;
     }
 }
